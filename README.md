@@ -46,6 +46,13 @@ git pull origin [브랜치이름]
 uv sync
 ```
 
+### 6. 파일 실행
+uv를 사용하여 파일을 실행합니다.
+
+```bash
+uv run 파일명
+```
+
 </br>
 
 ## 문제 해결 (Troubleshooting)
