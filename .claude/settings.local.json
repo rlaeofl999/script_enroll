@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import pandas as pd; df = pd.read_excel\\(''test_data.xlsx'', engine=''openpyxl''\\); print\\(list\\(df.columns\\)\\)\")"
+    ]
+  }
+}

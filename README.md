@@ -36,7 +36,7 @@ git push
 git fetch
 
 # 특정 브랜치의 내용을 가져와서 병합
-git pull origin [브랜치이름]
+git pull origin 브랜치이름
 ```
 
 ### 5. 라이브러리 설치

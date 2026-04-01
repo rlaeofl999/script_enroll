@@ -5,25 +5,34 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+import tkinter as tk
+from tkinter import filedialog, messagebox
 import time
 import os
 import re
 
 # ==========================================
-# 1. 파일 및 경로 설정
+# 1. 파일 선택 UI
 # ==========================================
-# 원본 엑셀 파일 경로 (파일명과 경로가 맞는지 꼭 확인하세요)
-file_path = r"C:\TEST.xlsx" 
-current_folder = os.path.dirname(os.path.abspath(__file__))
+root = tk.Tk()
+root.withdraw()  # 메인 창 숨기기
 
-if not os.path.exists(file_path):
-    print(f"❌ 에러: {file_path} 경로에 파일이 없습니다.")
+file_path = filedialog.askopenfilename(
+    title="분석할 엑셀 파일을 선택하세요",
+    filetypes=[("Excel 파일", "*.xlsx *.xls"), ("모든 파일", "*.*")]
+)
+
+if not file_path:
+    messagebox.showwarning("취소됨", "파일을 선택하지 않았습니다. 프로그램을 종료합니다.")
     exit()
+
+current_folder = os.path.dirname(os.path.abspath(file_path))
+
 
 try:
     df = pd.read_excel(file_path, engine='openpyxl')
     df.columns = df.columns.str.strip() # 컬럼명 공백 제거
-    print(f"✅ 엑셀 로드 성공! 총 {len(df)}명의 데이터를 분석합니다.")
+    print(f"✅ 엑셀 로드 성공! 파일: {os.path.basename(file_path)} / 총 {len(df)}명의 데이터를 분석합니다.")
 except Exception as e:
     print(f"❌ 엑셀 로드 실패: {e}")
     exit()
@@ -33,6 +42,8 @@ except Exception as e:
 # ==========================================
 options = webdriver.ChromeOptions()
 options.add_argument("--start-maximized")
+# 브라우저를 숨기려면 아래 줄의 주석을 해제
+options.add_argument("--headless")
 # 속도를 위해 불필요한 로그 끄기
 options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
@@ -41,50 +52,58 @@ wait = WebDriverWait(driver, 20)
 
 results = []
 
+def fill_field(driver, field_id, val):
+    """주어진 input id에 값을 입력. 값이 없으면 건너뜀."""
+    if pd.isnull(val) or str(val).strip().lower() in ("nan", ""):
+        return
+    try:
+        field = driver.find_element(By.ID, field_id)
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", field)
+        field.clear()
+        field.send_keys(str(val))
+    except Exception as e:
+        print(f"    ⚠ '{field_id}' 입력 실패: {e}")
+
 try:
     for index, row in df.iterrows():
         # [핵심] 이전 환자 데이터 잔상 제거를 위해 매번 페이지 새로고침
         driver.get("https://bostonmontpelliercare.shinyapps.io/AIClarity/")
-        time.sleep(10) # Shiny 서버 초기 로딩 대기 (중요)
+        wait.until(EC.presence_of_element_located((By.ID, "Bilirubin")))  # 첫 입력 필드가 뜰 때까지 대기
 
         p_id = str(row.get('연구내원번호', index + 1))
         print(f"\n>>> [{index + 1}/{len(df)}] 환자번호: {p_id} 입력 시작...")
 
-        # 데이터 매핑 (사이트 라벨 : 엑셀 컬럼명)
+        # 데이터 매핑 (사이트 input id : 엑셀 컬럼명)
+        # 사이트 HTML의 각 input id와 정확히 일치해야 합니다.
         mapping = {
-            "Bilirubin": row.get('Bilirubin'),
-            "Creatinine": row.get('Creatinine'),
-            "Albumin": row.get('Albumin'),
-            "Glucose": row.get('Glucose'),
-            "Sodium": row.get('Na'),
-            "Hematocrit": row.get('Hematocrit'),
+            "Bilirubin":              row.get('Bilirubin'),
+            "Creatinine":             row.get('Creatinine'),
+            "Albumin":                row.get('Albumin'),
+            "Glucose":                row.get('Glucose'),
+            "Sodium":                 row.get('Na'),
+            "Hematocrit":             row.get('Hematocrit'),
             "White blood cell count": row.get('WBC'),
-            "Platelet": row.get('Platelets'),
-            "PaCO2": row.get('PaCO2'),
-            "PaO2/FiO2 ratio": row.get('PaO/FiO ratio'),
-            "Temperature": row.get('BT'),
-            "Respiratory rate": row.get('Respiratory rate'),
-            "Heart rate": row.get('Heart rate'),
-            "Systolic blood pressure": row.get('Systolic blood pressure'),
-            "Bicarbonate": row.get('Bicarbonate')
+            "Platelet":               row.get('Platelets'),
+            "PaCO2":                  row.get('PaCO2'),
+            "PaO2/FiO2 ratio":        row.get('PaO/FiO ratio'),
+            "Temperature":            row.get('BT'),
+            "Respiratory rate":       row.get('Respiratory rate'),
+            "Heart rate":             row.get('Heart rate'),
+            "Systolic blood pressure":row.get('Systolic blood pressure'),
+            "Urine output":           row.get('Urine output'),
+            "Minute Ventilation":     row.get('Minute Ventilation'),
+            "Bicarbonate":            row.get('Bicarbonate'),
         }
 
-        # A. 수치 데이터 입력
-        for label_text, val in mapping.items():
-            if pd.notnull(val) and str(val).strip().lower() != "nan" and str(val).strip() != "":
-                try:
-                    xpath = f"//label[contains(text(), '{label_text}')]/following-sibling::input"
-                    field = driver.find_element(By.XPATH, xpath)
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", field)
-                    field.clear()
-                    field.send_keys(str(val))
-                except:
-                    pass
+        # A. 수치 데이터 입력 (By.ID 사용 - XPath보다 안정적)
+        for field_id, val in mapping.items():
+            fill_field(driver, field_id, val)
 
         # B. Vasopressors 선택
         try:
             v_col = 'Vasopressors (Use of vasopressors?)'
-            choice = str(row.get(v_col, 'No')).strip()
+            raw = row.get(v_col)
+            choice = 'No' if pd.isnull(raw) or str(raw).strip().lower() == 'nan' else str(raw).strip()
             vaso_div = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.selectize-input")))
             driver.execute_script("arguments[0].click();", vaso_div)
             time.sleep(1)
@@ -95,47 +114,46 @@ try:
                 }}
             """)
             print(f"    - Vasopressors: {choice} 선택 완료")
-        except:
-            print("    - Vasopressors 선택 건너뜀")
+        except Exception as e:
+            print(f"    - Vasopressors 선택 실패: {e}")
 
-        # C. Predict 버튼 클릭
+        # C. Predict 버튼 클릭 (실제 버튼 id: predict_btn)
         print("    - Prediction 요청 중...", end="", flush=True)
         try:
-            driver.execute_script("document.getElementById('go').click();")
-        except:
+            btn = wait.until(EC.element_to_be_clickable((By.ID, "predict_btn")))
+            driver.execute_script("arguments[0].click();", btn)
+        except Exception as e:
             try:
                 driver.execute_script("document.querySelector('button.btn-primary').click();")
-            except:
-                print(" 버튼 클릭 실패", end="")
+            except Exception as e2:
+                print(f" 버튼 클릭 실패: {e} / {e2}", end="")
         print(" 완료")
 
-        # D. 결과 추출 (정규식 기반 무한 집착 로직)
+        # D. 결과 추출 - prediction_output div를 직접 타겟
         final_res = "N/A"
         print("    - 결과 대기 중", end="", flush=True)
-        
+
         for i in range(25): # 최대 50초 대기
             time.sleep(2)
             print(".", end="", flush=True)
             try:
-                # 화면 전체 텍스트에서 '숫자 %' 패턴 찾기
-                page_text = driver.execute_script("return document.body.innerText;")
-                match = re.search(r'(\d+\.?\d*\s?%)', page_text)
-                
+                # prediction_output div의 텍스트를 직접 읽기
+                output_text = driver.execute_script(
+                    "return document.getElementById('prediction_output').innerText;"
+                )
+                match = re.search(r'(\d+\.?\d*\s?%)', output_text or "")
+
                 if match:
                     final_res = match.group(1)
                     break
-                
-                # 10초 지났는데 결과 안 나오면 버튼 한 번 더 클릭
-                if i == 5:
-                    driver.execute_script("document.getElementById('go').click();")
-            except:
-                pass
-        
+            except Exception as e:
+                print(f"\n    ⚠ 결과 읽기 오류: {e}", end="")
+
         print(f" => {final_res}")
         results.append(final_res)
 
         # [옵션] 10명마다 중간 저장 (혹시 모를 오류 대비)
-        if (index + 1) % 10 == 0:
+        if len(results) % 10 == 0:
             temp_df = df.iloc[:len(results)].copy()
             temp_df['Probability_Result'] = results
             temp_df.to_excel(os.path.join(current_folder, "BACKUP_CURRENT.xlsx"), index=False)
@@ -146,7 +164,7 @@ try:
     timestr = time.strftime("%Y%m%d-%H%M%S")
     # 파일명에 시간을 붙여서 덮어쓰기 권한 문제 원천 차단
     final_save_path = os.path.join(current_folder, f"RESULT_{timestr}.xlsx")
-    
+
     df['Probability_Result'] = results
     df.to_excel(final_save_path, index=False)
     print(f"\n✨🎉 대성공! 모든 작업이 완료되었습니다.")
