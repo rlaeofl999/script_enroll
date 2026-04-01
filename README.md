@@ -36,7 +36,14 @@ git push
 git fetch
 
 # 특정 브랜치의 내용을 가져와서 병합
-git pull origin [브랜치 이름]
+git pull origin [브랜치이름]
+```
+
+### 5. 라이브러리 설치
+공통된 작업환경을 위해 가상환경 및 라이브러리를 설치합니다.
+
+```bash
+uv sync
 ```
 
 </br>
