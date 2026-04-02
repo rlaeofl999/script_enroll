@@ -15,6 +15,7 @@ import re
 # 1. 파일 선택 UI
 # ==========================================
 root = tk.Tk()
+root.attributes('-topmost', True)  # 항상 맨 앞에 표시
 root.withdraw()  # 메인 창 숨기기
 
 file_path = filedialog.askopenfilename(
