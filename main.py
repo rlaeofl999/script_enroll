@@ -62,7 +62,7 @@ if os.path.exists(backup_path):
             for _, brow in backup_df.iterrows():
                 orig_idx = int(brow['_original_index'])
                 res = brow['Probability_Result']
-                if pd.notna(res) and str(res).strip() != 'N/A':
+                if pd.notna(res):
                     completed[orig_idx] = str(res)
             print(f"🔄 백업에서 {len(completed)}명의 기존 결과를 로드했습니다. 나머지부터 이어서 진행합니다.")
     except Exception as e:
@@ -82,8 +82,15 @@ options.add_argument("--headless")
 # 속도를 위해 불필요한 로그 끄기
 options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-wait = WebDriverWait(driver, 20)
+RESTART_EVERY = 500  # 500명마다 브라우저 재시작
+
+def start_browser():
+    d = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    w = WebDriverWait(d, 20)
+    return d, w
+
+driver, wait = start_browser()
+processed_count = 0
 
 results = {}  # index -> result (resume 포함)
 results.update(completed)
@@ -192,13 +199,20 @@ try:
 
         print(f" => {final_res}")
         results[index] = final_res
+        processed_count += 1
 
         # 매 환자마다 중간 저장 (resume용 백업)
         temp_df = df_batch.copy()
         temp_df['_original_index'] = temp_df.index
         temp_df['Probability_Result'] = temp_df.index.map(results)
         temp_df.to_excel(backup_path, index=False)
-        print(f"    💾 저장 완료 ({len(results)}명)")
+        print(f"    💾 저장 완료 (신규: {len(results) - len(completed)}명 / 전체: {len(results)}명)")
+
+        # 메모리 관리: 일정 간격마다 브라우저 재시작
+        if processed_count % RESTART_EVERY == 0:
+            print(f"\n🔄 브라우저 재시작 ({processed_count}명 처리 완료)...")
+            driver.quit()
+            driver, wait = start_browser()
 
     # ==========================================
     # 3. 최종 저장 (PermissionError 방지)
@@ -211,6 +225,20 @@ try:
     result_df.to_excel(final_save_path, index=False)
     print(f"\n✨🎉 대성공! {start_row}~{end_row}행 작업이 완료되었습니다.")
     print(f"📂 결과 파일 저장 위치: {final_save_path}")
+
+    # N/A 환자 목록 출력 및 저장
+    na_rows = {idx: res for idx, res in results.items() if res == 'N/A'}
+    if na_rows:
+        print(f"\n⚠ 결과를 가져오지 못한 환자: {len(na_rows)}명")
+        for idx in na_rows:
+            p_id = str(df.loc[idx].get('연구내원번호', idx + 1))
+            print(f"    - {idx + 1}행 (환자번호: {p_id})")
+        na_df = df_batch.loc[list(na_rows.keys())].copy()
+        na_save_path = os.path.join(current_folder, f"NA_{base_name}_{start_row}_{end_row}_{timestr}.xlsx")
+        na_df.to_excel(na_save_path, index=False)
+        print(f"📂 N/A 환자 목록 저장: {na_save_path}")
+    else:
+        print("\n✅ 모든 환자의 결과를 정상적으로 가져왔습니다.")
 
     # 백업 파일 정리
     if os.path.exists(backup_path):
