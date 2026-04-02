@@ -6,7 +6,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, simpledialog
 import time
 import os
 import re
@@ -38,6 +38,40 @@ except Exception as e:
     exit()
 
 # ==========================================
+# 1-1. 배치 구간 설정 + Resume
+# ==========================================
+start_row = simpledialog.askinteger("시작 행", f"시작 행 번호 (1 ~ {len(df)}):", initialvalue=1, minvalue=1, maxvalue=len(df))
+end_row = simpledialog.askinteger("끝 행", f"끝 행 번호 (1 ~ {len(df)}):", initialvalue=len(df), minvalue=1, maxvalue=len(df))
+
+if start_row is None or end_row is None:
+    messagebox.showwarning("취소됨", "구간을 설정하지 않았습니다. 프로그램을 종료합니다.")
+    exit()
+
+start_idx = start_row - 1  # 0-based index
+end_idx = end_row           # exclusive
+
+# 기존 백업 파일에서 이미 처리된 결과 로드 (resume)
+base_name = os.path.splitext(os.path.basename(file_path))[0]
+backup_path = os.path.join(current_folder, f"BACKUP_{base_name}_{start_row}_{end_row}.xlsx")
+completed = {}  # index -> result
+if os.path.exists(backup_path):
+    try:
+        backup_df = pd.read_excel(backup_path, engine='openpyxl')
+        if 'Probability_Result' in backup_df.columns and '_original_index' in backup_df.columns:
+            for _, brow in backup_df.iterrows():
+                orig_idx = int(brow['_original_index'])
+                res = brow['Probability_Result']
+                if pd.notna(res) and str(res).strip() != 'N/A':
+                    completed[orig_idx] = str(res)
+            print(f"🔄 백업에서 {len(completed)}명의 기존 결과를 로드했습니다. 나머지부터 이어서 진행합니다.")
+    except Exception as e:
+        print(f"⚠ 백업 로드 실패 (무시하고 처음부터 진행): {e}")
+
+df_batch = df.iloc[start_idx:end_idx]
+total_in_batch = len(df_batch)
+print(f"📋 처리 구간: {start_row}행 ~ {end_row}행 (총 {total_in_batch}명, 이미 완료: {len(completed)}명, 남은: {total_in_batch - len(completed)}명)")
+
+# ==========================================
 # 2. 브라우저 실행 및 환경 설정
 # ==========================================
 options = webdriver.ChromeOptions()
@@ -50,7 +84,8 @@ options.add_experimental_option("excludeSwitches", ["enable-logging"])
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 wait = WebDriverWait(driver, 20)
 
-results = []
+results = {}  # index -> result (resume 포함)
+results.update(completed)
 
 def fill_field(driver, field_id, val):
     """주어진 input id에 값을 입력. 값이 없으면 건너뜀."""
@@ -65,7 +100,12 @@ def fill_field(driver, field_id, val):
         print(f"    ⚠ '{field_id}' 입력 실패: {e}")
 
 try:
-    for index, row in df.iterrows():
+    for index, row in df_batch.iterrows():
+        # 이미 완료된 행은 건너뛰기
+        if index in completed:
+            print(f"    ⏭ [{index + 1}/{len(df)}] 이미 완료 - 건너뜀")
+            continue
+
         # [핵심] 이전 환자 데이터 잔상 제거를 위해 매번 페이지 새로고침
         driver.get("https://bostonmontpelliercare.shinyapps.io/AIClarity/")
         wait.until(EC.presence_of_element_located((By.ID, "Bilirubin")))  # 첫 입력 필드가 뜰 때까지 대기
@@ -150,25 +190,31 @@ try:
                 print(f"\n    ⚠ 결과 읽기 오류: {e}", end="")
 
         print(f" => {final_res}")
-        results.append(final_res)
+        results[index] = final_res
 
-        # [옵션] 10명마다 중간 저장 (혹시 모를 오류 대비)
-        if len(results) % 10 == 0:
-            temp_df = df.iloc[:len(results)].copy()
-            temp_df['Probability_Result'] = results
-            temp_df.to_excel(os.path.join(current_folder, "BACKUP_CURRENT.xlsx"), index=False)
+        # 매 환자마다 중간 저장 (resume용 백업)
+        temp_df = df_batch.copy()
+        temp_df['_original_index'] = temp_df.index
+        temp_df['Probability_Result'] = temp_df.index.map(results)
+        temp_df.to_excel(backup_path, index=False)
+        print(f"    💾 저장 완료 ({len(results)}명)")
 
     # ==========================================
     # 3. 최종 저장 (PermissionError 방지)
     # ==========================================
     timestr = time.strftime("%Y%m%d-%H%M%S")
-    # 파일명에 시간을 붙여서 덮어쓰기 권한 문제 원천 차단
-    final_save_path = os.path.join(current_folder, f"RESULT_{timestr}.xlsx")
+    final_save_path = os.path.join(current_folder, f"RESULT_{base_name}_{start_row}_{end_row}_{timestr}.xlsx")
 
-    df['Probability_Result'] = results
-    df.to_excel(final_save_path, index=False)
-    print(f"\n✨🎉 대성공! 모든 작업이 완료되었습니다.")
+    result_df = df_batch.copy()
+    result_df['Probability_Result'] = result_df.index.map(results)
+    result_df.to_excel(final_save_path, index=False)
+    print(f"\n✨🎉 대성공! {start_row}~{end_row}행 작업이 완료되었습니다.")
     print(f"📂 결과 파일 저장 위치: {final_save_path}")
+
+    # 백업 파일 정리
+    if os.path.exists(backup_path):
+        os.remove(backup_path)
+        print("🗑 백업 파일 삭제 완료")
 
 except Exception as e:
     print(f"\n❌ 실행 중 치명적 에러 발생: {e}")
