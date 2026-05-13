@@ -77,7 +77,8 @@ print(f"📋 처리 구간: {start_row}행 ~ {end_row}행 (총 {total_in_batch}�
 # ==========================================
 options = webdriver.ChromeOptions()
 options.add_argument("--start-maximized")
-# 브라우저를 숨기려면 아래 줄의 주석을 해제
+options.add_argument("--window-size=1920,1080")
+# 브라우저를 보고싶으면 아래 줄을 주석처리
 options.add_argument("--headless")
 # 속도를 위해 불필요한 로그 끄기
 options.add_experimental_option("excludeSwitches", ["enable-logging"])
@@ -102,8 +103,22 @@ def fill_field(driver, field_id, val):
     try:
         field = driver.find_element(By.ID, field_id)
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", field)
-        field.clear()
-        field.send_keys(str(val))
+        try:
+            field.clear()
+            field.send_keys(str(val))
+        except Exception:
+            driver.execute_script(
+                """
+                var el = arguments[0];
+                var v = arguments[1];
+                el.focus();
+                el.value = v;
+                el.dispatchEvent(new Event('input', {bubbles: true}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+                el.blur();
+                """,
+                field, str(val),
+            )
     except Exception as e:
         print(f"    ⚠ '{field_id}' 입력 실패: {e}")
 
@@ -118,11 +133,12 @@ try:
         driver.get("https://bostonmontpelliercare.shinyapps.io/AIClarity/")
         wait.until(EC.presence_of_element_located((By.ID, "Bilirubin")))  # 첫 입력 필드가 뜰 때까지 대기
 
-        p_id = str(row.get('연구내원번호', index + 1))
+        p_id = str(row.get('연구내원번호', index + 1))  # 환자id 컬럼명이 바뀌면 여기 수정 
         print(f"\n>>> [{index + 1}/{len(df)}] 환자번호: {p_id} 입력 시작...")
 
         # 데이터 매핑 (사이트 input id : 엑셀 컬럼명)
         # 사이트 HTML의 각 input id와 정확히 일치해야 합니다.
+        # row.get('Bilirubin') -> 이게 엑셀파일 컬럼명과 일치해야함.
         mapping = {
             "Bilirubin":              row.get('Bilirubin'),
             "Creatinine":             row.get('Creatinine'),
@@ -149,7 +165,7 @@ try:
 
         # B. Vasopressors 선택
         try:
-            v_col = 'Vasopressors (Use of vasopressors?)'
+            v_col = 'Vasopressors (Use of vasopressors?)'   # 컬럼명이 바뀌면 여기 수정
             raw = row.get(v_col)
             choice = 'No' if pd.isnull(raw) or str(raw).strip().lower() == 'nan' else str(raw).strip()
             vaso_div = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.selectize-input")))
@@ -231,7 +247,7 @@ try:
     if na_rows:
         print(f"\n⚠ 결과를 가져오지 못한 환자: {len(na_rows)}명")
         for idx in na_rows:
-            p_id = str(df.loc[idx].get('연구내원번호', idx + 1))
+            p_id = str(df.loc[idx].get('연구내원번호', idx + 1))  # 환자id 컬럼명이 바뀌면 여기 수정 
             print(f"    - {idx + 1}행 (환자번호: {p_id})")
         na_df = df_batch.loc[list(na_rows.keys())].copy()
         na_save_path = os.path.join(current_folder, f"NA_{base_name}_{start_row}_{end_row}_{timestr}.xlsx")
